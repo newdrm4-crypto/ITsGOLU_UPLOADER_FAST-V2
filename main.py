@@ -855,7 +855,7 @@ async def txt_handler(bot: Client, m: Message):
                 bcov = f'bcov_auth={cwtoken}'
                 url = url.split("bcov_auth")[0]+bcov
                            
-            elif "d1d34p8vz63oiq" in url or "sec1.pw.live" in url:
+            elif "aad1d34p8vz63oiq" in url or "sec1.pw.live" in url:
                 url = f"https://anonymouspwplayerrrr-c95d81521328.herokuapp.com/pw?url={url}?token={raw_text4}"
 
             if ".pdf*" in url:
