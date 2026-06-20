@@ -175,14 +175,18 @@ def vid_info(info):
     return new_info
 
 
+# ============================================================
+# ✅ decrypt_and_merge_video – FULLY OPTIMIZED (DRM + Aria2 + Fragments)
+# ============================================================
 async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name, quality="720"):
     try:
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        cmd1 = f'yt-dlp -f "bv[height<={quality}]+ba/b" -o "{output_path}/file.%(ext)s" --allow-unplayable-format --no-check-certificate --external-downloader aria2c "{mpd_url}"'
+        # ⚡ DRM के लिए Concurrent Fragments 10 + Aria2 (16 connections)
+        cmd1 = f'yt-dlp -f "bv[height<={quality}]+ba/b" -o "{output_path}/file.%(ext)s" --allow-unplayable-format --no-check-certificate --concurrent-fragments 10 --external-downloader aria2c --downloader-args "aria2c: -x 16 -s 16 -k 1M -j 5 --summary-interval=0 --console-log-level=error" "{mpd_url}"'
         print(f"Running command: {cmd1}")
-        os.system(cmd1)
+        await run(cmd1)
         
         avDir = list(output_path.iterdir())
         print(f"Downloaded files: {avDir}")
@@ -195,14 +199,14 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
             if data.suffix == ".mp4" and not video_decrypted:
                 cmd2 = f'mp4decrypt {keys_string} --show-progress "{data}" "{output_path}/video.mp4"'
                 print(f"Running command: {cmd2}")
-                os.system(cmd2)
+                await run(cmd2)
                 if (output_path / "video.mp4").exists():
                     video_decrypted = True
                 data.unlink()
             elif data.suffix == ".m4a" and not audio_decrypted:
                 cmd3 = f'mp4decrypt {keys_string} --show-progress "{data}" "{output_path}/audio.m4a"'
                 print(f"Running command: {cmd3}")
-                os.system(cmd3)
+                await run(cmd3)
                 if (output_path / "audio.m4a").exists():
                     audio_decrypted = True
                 data.unlink()
@@ -210,9 +214,9 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
         if not video_decrypted or not audio_decrypted:
             raise FileNotFoundError("Decryption failed: video or audio file not found.")
 
-        cmd4 = f'ffmpeg -i "{output_path}/video.mp4" -i "{output_path}/audio.m4a" -c copy "{output_path}/{output_name}.mp4"'
+        cmd4 = f'ffmpeg -i "{output_path}/video.mp4" -i "{output_path}/audio.m4a" -c copy -preset veryfast -threads 4 "{output_path}/{output_name}.mp4"'
         print(f"Running command: {cmd4}")
-        os.system(cmd4)
+        await run(cmd4)
         if (output_path / "video.mp4").exists():
             (output_path / "video.mp4").unlink()
         if (output_path / "audio.m4a").exists():
@@ -233,6 +237,9 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
         print(f"Error during decryption and merging: {str(e)}")
         raise
 
+# ============================================================
+# ✅ run – Async shell helper (already defined but we ensure it's used)
+# ============================================================
 async def run(cmd):
     proc = await asyncio.create_subprocess_shell(
         cmd,
@@ -352,21 +359,29 @@ async def fast_download(url, name):
     
     return None
 
+# ============================================================
+# ✅ download_video – FULLY OPTIMIZED FOR RENDER (MAX SPEED)
+# ============================================================
 async def download_video(url, cmd, name):
     retry_count = 0
     max_retries = 2
 
     while retry_count < max_retries:
-
-
-        download_cmd = f'{cmd} -R 25 --fragment-retries 25 --external-downloader aria2c --downloader-args "aria2c: -x 16 -j 32"'
+        # 🔥 Render के Data Center IP को तोड़ने के लिए:
+        # 1. HLS/DASH (m3u8/mpd) – Concurrent Fragments बढ़ाकर 10 करो
+        # 2. Progressive MP4 – Aria2 के 16 कनेक्शन चालू करो
+        if "m3u8" in url or "mpd" in url:
+            download_cmd = f'{cmd} -R 25 --fragment-retries 25 --no-check-certificate --concurrent-fragments 10'
+        else:
+            download_cmd = f'{cmd} -R 25 --fragment-retries 25 --external-downloader aria2c --downloader-args "aria2c: -x 16 -s 16 -k 1M -j 5 --summary-interval=0 --console-log-level=error"'
+        
         print(download_cmd)
         logging.info(download_cmd)
 
-        k = subprocess.run(download_cmd, shell=True)
+        k = await run(download_cmd)  # async run
 
-        if k.returncode == 0:
-            break  # success
+        if k is not False:  # success if returncode != 1
+            break
 
         retry_count += 1
         print(f"⚠️ Download failed (attempt {retry_count}/{max_retries}), retrying in 5s...")
@@ -377,14 +392,10 @@ async def download_video(url, cmd, name):
             return name
         elif os.path.isfile(f"{name}.webm"):
             return f"{name}.webm"
-        name = name.split(".")[0]
-        if os.path.isfile(f"{name}.mkv"):
-            return f"{name}.mkv"
-        elif os.path.isfile(f"{name}.mp4"):
-            return f"{name}.mp4"
-        elif os.path.isfile(f"{name}.mp4.webm"):
-            return f"{name}.mp4.webm"
-
+        name_base = name.split(".")[0]
+        for ext in [".mkv", ".mp4", ".mp4.webm"]:
+            if os.path.isfile(f"{name_base}{ext}"):
+                return f"{name_base}{ext}"
         return name + ".mp4"
     except Exception as exc:
         logging.error(f"Error checking file: {exc}")
